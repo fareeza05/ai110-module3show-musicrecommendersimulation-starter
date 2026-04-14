@@ -214,11 +214,52 @@ Running `python src/main.py` produces the following for three contrasting profil
 
 ## Experiments You Tried
 
-Use this section to document the experiments you ran. For example:
+### Experiment 1 — Does it feel right? Pop / Happy profile
 
-- What happened when you changed the weight on genre from 2.0 to 0.5
-- What happened when you added tempo or valence to the score
-- How did your system behave for different types of users
+**Profile:** `genre=pop, mood=happy, energy=0.80`
+
+**Top result:** *Sunrise City* — Score: `0.99`
+
+**Musical intuition check:** Yes, this feels correct. *Sunrise City* is upbeat pop with `energy=0.82` and `valence=0.84`, which is almost exactly what a happy pop listener would queue. The near-perfect score reflects three simultaneous matches — genre, mood, and energy — happening at once. If the system got this wrong it would signal a fundamental flaw in the recipe. It passes.
+
+**What's slightly off:** *Gym Hero* ranks #2 at `0.74` because it matches genre (pop) but its mood is "intense" not "happy". The system surfaces it anyway because the genre weight of `3.0` carries it. A human curator would push it down further.
+
+---
+
+### Experiment 2 — When it does NOT feel right: the Sad Banger
+
+**Profile:** `genre=metal, mood=melancholic, energy=0.92`
+
+**Top result:** *Iron Pulse* (metal / **angry**) — Score: `0.78`
+**Second result:** *Autumn Letters* (folk / melancholic) — Score: `0.44`
+
+**Musical intuition check:** This feels **wrong**. A user who says "I want melancholic metal" is describing something like doom metal or post-metal — dark, emotional, heavy. The system returns *Iron Pulse*, which is labeled "angry" — an entirely different emotional register. *Autumn Letters*, which correctly matches the "melancholic" mood, scores nearly half as much (`0.44`) and is buried at #2 despite being the closer emotional match.
+
+**Inline Chat explanation — why Iron Pulse ranked first:**
+
+The prompt used:
+> *"Referencing `score_song()` in `#file:recommender.py`, explain step by step why Iron Pulse scored 0.78 for a user with `genre='metal', mood='melancholic', energy=0.92`. Walk through every term and explain why it beats Autumn Letters despite the mood mismatch."*
+
+**Feature-by-feature breakdown:**
+
+| Feature | Weight | Iron Pulse contribution | Autumn Letters contribution |
+|---|---|---|---|
+| `genre` | 3.0 | **3.000** (metal = metal ✓) | 0.000 (folk ≠ metal ✗) |
+| `mood` | 2.0 | 0.000 (angry ≠ melancholic ✗) | **2.000** (melancholic = melancholic ✓) |
+| `energy` | 1.5 | **1.440** (0.96 ≈ 0.92) | 0.585 (0.31 far from 0.92) |
+| `valence` | 1.2 | **1.164** (0.28 ≈ 0.25) | 1.068 (0.36 ≈ 0.25) |
+| `acousticness` | 1.0 | **1.000** (0.05 = 0.05) | 0.140 (0.91 far from 0.05) |
+| `tempo` | 0.5 | **0.500** (148 = 148) | 0.109 (76 far from 148) |
+| `danceability` | 0.3 | **0.291** | 0.270 |
+| **Total / 9.5** | | **0.78** | **0.44** |
+
+**Why genre beats mood here:**
+Iron Pulse scores `3.000` from the genre match alone. Autumn Letters scores `2.000` from the mood match. That single-feature gap of `+1.0` is already insurmountable — Iron Pulse leads by the equivalent of the entire mood weight before any audio features are even calculated.
+
+**What this reveals about the system:**
+The recipe treats mood as a weaker signal than genre (2.0 vs 3.0). That is a deliberate design choice for most situations — recommending rock to a lofi listener is worse than recommending the wrong mood within the right genre. But the Sad Banger profile exposes where that assumption breaks down: a user asking for a specific emotional tone within a genre cannot be served when that combination does not exist in the catalog, and the genre weight will always surface the wrong-mood version of the right genre over the right-mood version of the wrong genre.
+
+**Fix that would help:** Partial credit for related moods. If "angry" and "melancholic" were scored at `0.4` rather than `0.0`, Autumn Letters would recover enough to compete. This is a known limitation documented in the Expected Biases section above.
 
 ---
 
@@ -242,10 +283,9 @@ Read and complete `model_card.md`:
 
 [**Model Card**](model_card.md)
 
-Write 1 to 2 paragraphs here about what you learned:
+Building this recommender made it clear that a system does not need to "understand" music to produce results that feel like recommendations. The scoring formula is seven multiplications and an addition, yet for a well-formed profile like Pop / Happy it surfaces *Sunrise City* at 0.99 and the explanation reads exactly like something a human curator would say. The reason it feels intelligent is that the genre and mood labels carry human judgment about what songs sound and feel like — the algorithm just retrieves that judgment and presents it as if it reasoned. The weight-swap experiment confirmed this: doubling energy's importance and halving genre's barely changed the rankings, because in a structured catalog the label and the audio numbers say nearly the same thing. What the system *knows* is entirely determined by how the data was labeled, not by the math.
 
-- about how recommenders turn data into predictions
-- about where bias or unfairness could show up in systems like this
+The bias side was harder to accept. A system can be mathematically correct and musically wrong at the same time — Iron Pulse is the right answer to "metal + high energy + low acousticness" and the wrong answer to "give me something melancholic." Genre dominance means a quiet lofi track beats every song in every other genre for a lofi listener, regardless of energy. Binary mood matching means "relaxed" and "chill" score identically to "angry" and "happy" for a user who asked for "focused" — all zero. These are not bugs; they are the direct result of design choices that seemed reasonable in isolation. Real fairness problems in AI systems work the same way: they usually trace back to a reasonable-looking decision (weight genre highly, use exact string matching) that happens to harm a specific group of users (listeners who want a mood the catalog does not have, listeners whose genres are underrepresented). Seeing that pattern at this small scale made it easier to believe it operates at a much larger scale in production systems.
 
 
 ---
